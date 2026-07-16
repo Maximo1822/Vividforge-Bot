@@ -36,18 +36,40 @@ class VividForgeBot(commands.Bot):
                 print(f"   Loaded cog: {cog}")
             except Exception as e:
                 print(f"   ⚠ Failed to load cog {cog}: {e}")
-        await self.tree.sync()
-        print("   ✅ Slash commands synced.")
 
     async def on_ready(self):
         print(f"✅ Logged in as {self.user} (ID: {self.user.id})")
         print(f"   Serving {len(self.guilds)} guild(s).")
+
+        # Sync slash commands to every guild the bot is in — instant propagation.
+        # Global sync (no guild arg) can take up to 1 hour; per-guild is immediate.
+        synced_guilds = []
+        for guild in self.guilds:
+            try:
+                await self.tree.sync(guild=guild)
+                synced_guilds.append(guild.name)
+            except Exception as e:
+                print(f"   ⚠ Failed to sync to {guild.name}: {e}")
+
+        if synced_guilds:
+            print(f"   ✅ Slash commands synced to: {', '.join(synced_guilds)}")
+        else:
+            print("   ⚠ No guilds to sync to.")
+
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
                 name="VividForge | !help",
             )
         )
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """Sync slash commands immediately when the bot joins a new server."""
+        try:
+            await self.tree.sync(guild=guild)
+            print(f"   ✅ Synced slash commands to new guild: {guild.name}")
+        except Exception as e:
+            print(f"   ⚠ Failed to sync to {guild.name}: {e}")
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
@@ -66,6 +88,22 @@ class VividForgeBot(commands.Bot):
 
 
 bot = VividForgeBot()
+
+
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync(ctx: commands.Context):
+    """Force-sync slash commands to this server. Owner only."""
+    try:
+        synced = await bot.tree.sync(guild=ctx.guild)
+        await ctx.send(embed=discord.Embed(
+            title="✅ Synced",
+            description=f"Synced **{len(synced)}** slash command(s) to **{ctx.guild.name}**.",
+            color=discord.Color.green(),
+        ))
+    except Exception as e:
+        await ctx.send(embed=discord.Embed(description=f"❌ Sync failed: `{e}`", color=discord.Color.red()))
+
 
 if __name__ == "__main__":
     import asyncio
