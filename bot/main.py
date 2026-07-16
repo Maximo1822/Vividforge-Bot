@@ -41,21 +41,16 @@ class VividForgeBot(commands.Bot):
         print(f"✅ Logged in as {self.user} (ID: {self.user.id})")
         print(f"   Serving {len(self.guilds)} guild(s).")
 
-        # Sync slash commands to every guild the bot is in — instant propagation.
-        # Global sync (no guild arg) can take up to 1 hour; per-guild is immediate.
-        synced_guilds = []
+        # Clear any guild-specific commands that caused duplicates before
         for guild in self.guilds:
             try:
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-                synced_guilds.append(guild.name)
-            except Exception as e:
-                print(f"   ⚠ Failed to sync to {guild.name}: {e}")
+                await self.tree.sync(guild=guild)  # syncs empty guild list → removes guild copies
+            except Exception:
+                pass
 
-        if synced_guilds:
-            print(f"   ✅ Slash commands synced to: {', '.join(synced_guilds)}")
-        else:
-            print("   ⚠ No guilds to sync to.")
+        # Register commands globally (shows in all servers, no duplicates)
+        synced = await self.tree.sync()
+        print(f"   ✅ Synced {len(synced)} slash command(s) globally.")
 
         await self.change_presence(
             activity=discord.Activity(
@@ -63,15 +58,6 @@ class VividForgeBot(commands.Bot):
                 name="VividForge | !help",
             )
         )
-
-    async def on_guild_join(self, guild: discord.Guild):
-        """Sync slash commands immediately when the bot joins a new server."""
-        try:
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"   ✅ Synced slash commands to new guild: {guild.name}")
-        except Exception as e:
-            print(f"   ⚠ Failed to sync to {guild.name}: {e}")
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
