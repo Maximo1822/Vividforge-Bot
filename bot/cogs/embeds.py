@@ -141,7 +141,7 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
 
 class EditEmbedModal(discord.ui.Modal, title="Edit Embed"):
     new_title = discord.ui.TextInput(label="Title", required=False, max_length=256)
-    new_description = discord.ui.TextInput(label="Description", style=discord.TextStyle.long, required=False, max_length=4096)
+    new_description = discord.ui.TextInput(label="Description", style=discord.TextStyle.long, required=False, max_length=4000)
     new_color = discord.ui.TextInput(label="Color (name or #hex)", required=False, max_length=30, placeholder="e.g. gold or #FFD700")
     new_footer = discord.ui.TextInput(label="Footer", required=False, max_length=2048)
     new_image = discord.ui.TextInput(label="Image URL", required=False, max_length=500)
@@ -278,7 +278,7 @@ class EmbedBuilderModal(discord.ui.Modal, title="🖼️ Embed Builder"):
         style=discord.TextStyle.long,
         placeholder="Main body text. Markdown supported: **bold**, *italic*, `code` …",
         required=False,
-        max_length=4096,
+        max_length=4000,
     )
     color = discord.ui.TextInput(
         label="Side-bar Color  (name or #hex)",
