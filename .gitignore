@@ -17,17 +17,26 @@ venv/
 env/
 ENV/
 
-# Environment
+# Environment / secrets
 .env
 .env.local
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Node / pnpm
+# Replit internals (keep out of GitHub)
+.replit
+.replitignore
+.npmrc
+artifacts/
+lib/
+scripts/
+pyproject.toml
+uv.lock
+replit.md
+pnpm-workspace.yaml
+pnpm-lock.yaml
+package.json
+tsconfig.json
+tsconfig.base.json
+*.tsbuildinfo
 node_modules/
 .pnpm-store/
 
