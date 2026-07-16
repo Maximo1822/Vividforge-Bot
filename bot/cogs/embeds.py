@@ -71,6 +71,9 @@ class AddFieldModal(discord.ui.Modal, title="Add a Field"):
             view=self.embed_view,
         )
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+
 
 # ── UI: Advanced options modal ────────────────────────────────────────────────
 
@@ -118,7 +121,10 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
         if self.thumbnail_url.value:
             emb.set_thumbnail(url=self.thumbnail_url.value)
         if self.author_name.value:
-            emb.set_author(name=self.author_name.value, icon_url=self.author_icon.value or discord.Embed.Empty)
+            emb.set_author(
+                name=self.author_name.value,
+                icon_url=self.author_icon.value if self.author_icon.value else None,
+            )
         if self.timestamp.value.strip().lower() in ("yes", "y", "true", "1"):
             emb.timestamp = datetime.datetime.now(datetime.timezone.utc)
         await interaction.response.edit_message(
@@ -126,6 +132,9 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
             embed=emb,
             view=self.embed_view,
         )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
 
 
 # ── UI: Edit main embed modal ─────────────────────────────────────────────────
@@ -158,6 +167,9 @@ class EditEmbedModal(discord.ui.Modal, title="Edit Embed"):
             embed=emb,
             view=self.embed_view,
         )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
 
 
 # ── UI: Action buttons shown after preview ────────────────────────────────────
@@ -231,6 +243,9 @@ class SendToChannelModal(discord.ui.Modal, title="Send to Channel"):
         await ch.send(embed=self.embed_view.embed)
         await interaction.response.edit_message(content=f"✅ Embed sent to {ch.mention}!", embed=None, view=None)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+
 
 # ── Main embed builder modal (triggered by /embed) ───────────────────────────
 
@@ -288,6 +303,12 @@ class EmbedBuilderModal(discord.ui.Modal, title="🖼️ Embed Builder"):
             view=view,
             ephemeral=True,
         )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
