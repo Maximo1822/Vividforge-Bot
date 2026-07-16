@@ -46,6 +46,7 @@ class VividForgeBot(commands.Bot):
         synced_guilds = []
         for guild in self.guilds:
             try:
+                self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
                 synced_guilds.append(guild.name)
             except Exception as e:
@@ -66,6 +67,7 @@ class VividForgeBot(commands.Bot):
     async def on_guild_join(self, guild: discord.Guild):
         """Sync slash commands immediately when the bot joins a new server."""
         try:
+            self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
             print(f"   ✅ Synced slash commands to new guild: {guild.name}")
         except Exception as e:
