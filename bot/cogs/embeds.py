@@ -150,10 +150,17 @@ class EditEmbedModal(discord.ui.Modal, title="Edit Embed"):
         super().__init__()
         self.embed_view = view
         emb = view.embed
-        if emb.title:        self.new_title.default = emb.title
-        if emb.description:  self.new_description.default = emb.description
-        if emb.footer.text:  self.new_footer.default = emb.footer.text
-        if emb.image.url:    self.new_image.default = emb.image.url
+        if emb.title:
+            self.new_title.default = emb.title
+        if emb.description:
+            self.new_description.default = emb.description
+        # Use getattr to safely read proxy objects that may not exist
+        footer_text = getattr(emb.footer, "text", None)
+        if footer_text:
+            self.new_footer.default = footer_text
+        image_url = getattr(emb.image, "url", None)
+        if image_url:
+            self.new_image.default = image_url
 
     async def on_submit(self, interaction: discord.Interaction):
         emb = self.embed_view.embed
@@ -215,6 +222,16 @@ class EmbedActionsView(discord.ui.View):
     @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger, row=1)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Cancelled.", embed=None, view=None)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
+        print(f"EmbedActionsView error on {item}: {error}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ Button error: `{error}`", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Button error: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
 # ── UI: Send to channel modal ─────────────────────────────────────────────────
@@ -284,31 +301,49 @@ class EmbedBuilderModal(discord.ui.Modal, title="🖼️ Embed Builder"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(color=resolve_color(self.color.value or "blurple"))
-        if self.embed_title.value:  embed.title       = self.embed_title.value
-        if self.description.value:  embed.description = self.description.value
-        if self.footer.value:       embed.set_footer(text=self.footer.value)
-        if self.image_url.value:    embed.set_image(url=self.image_url.value)
+        # Defer immediately — this acknowledges the interaction within 3 s
+        # and gives us 15 minutes to send the real response via followup.
+        await interaction.response.defer(ephemeral=True)
+        try:
+            embed = discord.Embed(color=resolve_color(self.color.value or "blurple"))
+            if self.embed_title.value:  embed.title       = self.embed_title.value
+            if self.description.value:  embed.description = self.description.value
+            if self.footer.value:       embed.set_footer(text=self.footer.value)
+            if self.image_url.value:    embed.set_image(url=self.image_url.value)
 
-        if not any([embed.title, embed.description, embed.image.url]):
-            return await interaction.response.send_message(
-                embed=discord.Embed(description="❌ Add at least a title, description, or image.", color=discord.Color.red()),
+            has_content = any([self.embed_title.value, self.description.value, self.image_url.value])
+            if not has_content:
+                return await interaction.followup.send(
+                    embed=discord.Embed(
+                        description="❌ Add at least a **title**, **description**, or **image URL**.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True,
+                )
+
+            view = EmbedActionsView(embed=embed, author_id=interaction.user.id)
+            await interaction.followup.send(
+                content="**Preview** — use the buttons below to refine and send.",
+                embed=embed,
+                view=view,
                 ephemeral=True,
             )
-
-        view = EmbedActionsView(embed=embed, author_id=interaction.user.id)
-        await interaction.response.send_message(
-            content="**Preview** — use the buttons below to refine and send.",
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
+        except Exception as e:
+            print(f"EmbedBuilderModal.on_submit error: {e}")
+            try:
+                await interaction.followup.send(f"❌ Error building embed: `{e}`", ephemeral=True)
+            except Exception:
+                pass
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        if interaction.response.is_done():
-            await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        print(f"EmbedBuilderModal error: {error}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -324,7 +359,12 @@ class Embeds(commands.Cog):
     @app_commands.command(name="embed", description="Open the guided embed builder.")
     async def embed_slash(self, interaction: discord.Interaction):
         """Opens a step-by-step form to build and send a custom embed."""
-        await interaction.response.send_modal(EmbedBuilderModal())
+        try:
+            await interaction.response.send_modal(EmbedBuilderModal())
+        except Exception as e:
+            print(f"embed_slash error: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Could not open the embed builder: `{e}`", ephemeral=True)
 
     # ── !embed (prefix — flag-based, power user) ──────────────────────────────
 
@@ -382,7 +422,11 @@ class Embeds(commands.Cog):
         for name, value, inline in self._collect_fields(tokens):
             embed.add_field(name=name[:256], value=value[:1024], inline=inline)
 
-        if not any([embed.title, embed.description, embed.fields, embed.image.url, embed.thumbnail.url]):
+        has_content = any([
+            flags.get("title"), flags.get("description"), flags.get("image"),
+            flags.get("thumbnail"), embed.fields,
+        ])
+        if not has_content:
             return await ctx.send(embed=discord.Embed(description="❌ The embed has no content.", color=discord.Color.red()))
 
         channel = ctx.channel
@@ -490,6 +534,17 @@ class Embeds(commands.Cog):
             ),
             color=discord.Color.blurple(),
         )
+
+
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        print(f"Embeds app command error: {error}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
 async def setup(bot: commands.Bot):
