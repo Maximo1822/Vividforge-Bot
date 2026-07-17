@@ -14,11 +14,6 @@ NAMED_COLORS: dict[str, int] = {
     "maroon": 0x800000, "violet": 0xEE82EE, "indigo": 0x4B0082, "coral": 0xFF7F50,
 }
 
-COLOR_CHOICES = [
-    app_commands.Choice(name=name.capitalize(), value=name)
-    for name in list(NAMED_COLORS.keys())[:25]  # Discord limit: 25 choices
-]
-
 
 def resolve_color(raw: str) -> discord.Color:
     raw = raw.strip().lower()
@@ -30,56 +25,163 @@ def resolve_color(raw: str) -> discord.Color:
         return discord.Color.blurple()
 
 
-# ── UI: Add Field modal ───────────────────────────────────────────────────────
+# ── Modal: Step 1 — core fields ───────────────────────────────────────────────
 
-class AddFieldModal(discord.ui.Modal, title="Add a Field"):
-    field_name = discord.ui.TextInput(
-        label="Field Name",
-        placeholder="e.g. Status, Notes, Links …",
-        max_length=256,
-        required=True,
-    )
-    field_value = discord.ui.TextInput(
-        label="Field Value",
-        style=discord.TextStyle.long,
-        placeholder="The content of this field …",
-        max_length=1024,
-        required=True,
-    )
-    inline = discord.ui.TextInput(
-        label="Inline? (yes / no)",
-        placeholder="yes",
-        default="no",
-        max_length=3,
+class EmbedBuilderModal(discord.ui.Modal, title="Embed Builder — Step 1"):
+    embed_title = discord.ui.TextInput(
+        label="Title",
+        placeholder="Your embed title…",
         required=False,
+        max_length=256,
+    )
+    description = discord.ui.TextInput(
+        label="Description",
+        style=discord.TextStyle.long,
+        placeholder="Main body. Markdown works: **bold**, *italic*, `code`, > quote",
+        required=False,
+        max_length=4000,
+    )
+    color = discord.ui.TextInput(
+        label="Color (name or #hex)",
+        placeholder="e.g.  gold  /  #FFD700  /  blurple  /  red",
+        default="blurple",
+        required=False,
+        max_length=30,
+    )
+    footer = discord.ui.TextInput(
+        label="Footer Text",
+        placeholder="e.g. VividForge • Today",
+        required=False,
+        max_length=2048,
+    )
+    image_url = discord.ui.TextInput(
+        label="Image URL (large bottom image)",
+        placeholder="https://example.com/image.png",
+        required=False,
+        max_length=500,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            embed = discord.Embed(color=resolve_color(self.color.value or "blurple"))
+            if self.embed_title.value:
+                embed.title = self.embed_title.value
+            if self.description.value:
+                embed.description = self.description.value
+            if self.footer.value:
+                embed.set_footer(text=self.footer.value)
+            if self.image_url.value:
+                embed.set_image(url=self.image_url.value)
+
+            if not any([self.embed_title.value, self.description.value, self.image_url.value]):
+                return await interaction.followup.send(
+                    embed=discord.Embed(
+                        description="❌ Add at least a **title**, **description**, or **image URL**.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True,
+                )
+
+            view = EmbedActionsView(embed=embed, author_id=interaction.user.id)
+            await interaction.followup.send(
+                content=(
+                    "**🖼️ Preview** — use the buttons to refine, then send.\n"
+                    "-# ✏️ Edit core fields  •  ⚙️ Advanced (author, thumbnail, URL, timestamp)  "
+                    "•  ➕ Add fields  •  📤 Pick a channel below"
+                ),
+                embed=embed,
+                view=view,
+                ephemeral=True,
+            )
+        except Exception as e:
+            print(f"EmbedBuilderModal.on_submit error: {e}")
+            try:
+                await interaction.followup.send(f"❌ Error: `{e}`", ephemeral=True)
+            except Exception:
+                pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        print(f"EmbedBuilderModal.on_error: {error}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ Error: `{error}`", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
+        except Exception:
+            pass
+
+
+# ── Modal: Edit core fields ───────────────────────────────────────────────────
+
+class EditEmbedModal(discord.ui.Modal, title="Edit Embed"):
+    new_title = discord.ui.TextInput(
+        label="Title", required=False, max_length=256,
+    )
+    new_description = discord.ui.TextInput(
+        label="Description", style=discord.TextStyle.long, required=False, max_length=4000,
+    )
+    new_color = discord.ui.TextInput(
+        label="Color (name or #hex)", required=False, max_length=30,
+        placeholder="e.g. gold or #FFD700",
+    )
+    new_footer = discord.ui.TextInput(
+        label="Footer", required=False, max_length=2048,
+    )
+    new_image = discord.ui.TextInput(
+        label="Image URL (large bottom image)", required=False, max_length=500,
     )
 
     def __init__(self, view: "EmbedActionsView"):
         super().__init__()
         self.embed_view = view
+        emb = view.embed
+        if emb.title:
+            self.new_title.default = emb.title
+        if emb.description:
+            self.new_description.default = emb.description
+        footer_text = getattr(emb.footer, "text", None)
+        if footer_text:
+            self.new_footer.default = footer_text
+        image_url = getattr(emb.image, "url", None)
+        if image_url:
+            self.new_image.default = image_url
 
     async def on_submit(self, interaction: discord.Interaction):
-        inline = self.inline.value.strip().lower() in ("yes", "y", "true", "1")
-        self.embed_view.embed.add_field(
-            name=self.field_name.value,
-            value=self.field_value.value,
-            inline=inline,
-        )
+        emb = self.embed_view.embed
+        if self.new_title.value:
+            emb.title = self.new_title.value
+        if self.new_description.value:
+            emb.description = self.new_description.value
+        if self.new_color.value:
+            emb.color = resolve_color(self.new_color.value)
+        if self.new_footer.value:
+            emb.set_footer(text=self.new_footer.value)
+        if self.new_image.value:
+            emb.set_image(url=self.new_image.value)
         await interaction.response.edit_message(
-            content="**Preview** (updated with new field)",
-            embed=self.embed_view.embed,
+            content=(
+                "**🖼️ Preview** (edited) — use the buttons to refine, then send.\n"
+                "-# ✏️ Edit core fields  •  ⚙️ Advanced (author, thumbnail, URL, timestamp)  "
+                "•  ➕ Add fields  •  📤 Pick a channel below"
+            ),
+            embed=emb,
             view=self.embed_view,
         )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        print(f"EditEmbedModal.on_error: {error}")
+        try:
+            await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
-# ── UI: Advanced options modal ────────────────────────────────────────────────
+# ── Modal: Advanced options (author, thumbnail, title URL, timestamp) ─────────
 
-class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
+class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Options"):
     title_url = discord.ui.TextInput(
-        label="Title URL (makes title clickable)",
+        label="Title URL (makes title a hyperlink)",
         placeholder="https://example.com",
         required=False,
         max_length=500,
@@ -92,7 +194,7 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
     )
     author_name = discord.ui.TextInput(
         label="Author Name",
-        placeholder="e.g. VividForge Bot",
+        placeholder="e.g. VividForge",
         required=False,
         max_length=256,
     )
@@ -113,6 +215,18 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
     def __init__(self, view: "EmbedActionsView"):
         super().__init__()
         self.embed_view = view
+        emb = view.embed
+        if emb.url:
+            self.title_url.default = emb.url
+        thumb_url = getattr(emb.thumbnail, "url", None)
+        if thumb_url:
+            self.thumbnail_url.default = thumb_url
+        author_name = getattr(emb.author, "name", None)
+        if author_name:
+            self.author_name.default = author_name
+        author_icon = getattr(emb.author, "icon_url", None)
+        if author_icon:
+            self.author_icon.default = author_icon
 
     async def on_submit(self, interaction: discord.Interaction):
         emb = self.embed_view.embed
@@ -127,221 +241,173 @@ class AdvancedOptionsModal(discord.ui.Modal, title="Advanced Embed Options"):
             )
         if self.timestamp.value.strip().lower() in ("yes", "y", "true", "1"):
             emb.timestamp = datetime.datetime.now(datetime.timezone.utc)
+        else:
+            emb.timestamp = None
         await interaction.response.edit_message(
-            content="**Preview** (advanced options applied)",
+            content=(
+                "**🖼️ Preview** (advanced applied) — use the buttons to refine, then send.\n"
+                "-# ✏️ Edit core fields  •  ⚙️ Advanced (author, thumbnail, URL, timestamp)  "
+                "•  ➕ Add fields  •  📤 Pick a channel below"
+            ),
             embed=emb,
             view=self.embed_view,
         )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        print(f"AdvancedOptionsModal.on_error: {error}")
+        try:
+            await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
-# ── UI: Edit main embed modal ─────────────────────────────────────────────────
+# ── Modal: Add field ──────────────────────────────────────────────────────────
 
-class EditEmbedModal(discord.ui.Modal, title="Edit Embed"):
-    new_title = discord.ui.TextInput(label="Title", required=False, max_length=256)
-    new_description = discord.ui.TextInput(label="Description", style=discord.TextStyle.long, required=False, max_length=4000)
-    new_color = discord.ui.TextInput(label="Color (name or #hex)", required=False, max_length=30, placeholder="e.g. gold or #FFD700")
-    new_footer = discord.ui.TextInput(label="Footer", required=False, max_length=2048)
-    new_image = discord.ui.TextInput(label="Image URL", required=False, max_length=500)
+class AddFieldModal(discord.ui.Modal, title="Add a Field"):
+    field_name = discord.ui.TextInput(
+        label="Field Name",
+        placeholder="e.g. Status, Members, Links…",
+        max_length=256,
+        required=True,
+    )
+    field_value = discord.ui.TextInput(
+        label="Field Value",
+        style=discord.TextStyle.long,
+        placeholder="Content of this field (markdown supported)",
+        max_length=1024,
+        required=True,
+    )
+    inline = discord.ui.TextInput(
+        label="Inline? (yes / no)  — side-by-side with other inline fields",
+        placeholder="no",
+        default="no",
+        max_length=3,
+        required=False,
+    )
 
     def __init__(self, view: "EmbedActionsView"):
         super().__init__()
         self.embed_view = view
-        emb = view.embed
-        if emb.title:
-            self.new_title.default = emb.title
-        if emb.description:
-            self.new_description.default = emb.description
-        # Use getattr to safely read proxy objects that may not exist
-        footer_text = getattr(emb.footer, "text", None)
-        if footer_text:
-            self.new_footer.default = footer_text
-        image_url = getattr(emb.image, "url", None)
-        if image_url:
-            self.new_image.default = image_url
 
     async def on_submit(self, interaction: discord.Interaction):
-        emb = self.embed_view.embed
-        if self.new_title.value:       emb.title = self.new_title.value
-        if self.new_description.value: emb.description = self.new_description.value
-        if self.new_color.value:       emb.color = resolve_color(self.new_color.value)
-        if self.new_footer.value:      emb.set_footer(text=self.new_footer.value)
-        if self.new_image.value:       emb.set_image(url=self.new_image.value)
+        inline = self.inline.value.strip().lower() in ("yes", "y", "true", "1")
+        self.embed_view.embed.add_field(
+            name=self.field_name.value,
+            value=self.field_value.value,
+            inline=inline,
+        )
         await interaction.response.edit_message(
-            content="**Preview** (edited)",
-            embed=emb,
+            content=(
+                "**🖼️ Preview** (field added) — use the buttons to refine, then send.\n"
+                "-# ✏️ Edit core fields  •  ⚙️ Advanced (author, thumbnail, URL, timestamp)  "
+                "•  ➕ Add fields  •  📤 Pick a channel below"
+            ),
+            embed=self.embed_view.embed,
             view=self.embed_view,
         )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        print(f"AddFieldModal.on_error: {error}")
+        try:
+            await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
+        except Exception:
+            pass
 
 
-# ── UI: Action buttons shown after preview ────────────────────────────────────
+# ── View: action buttons + channel select ─────────────────────────────────────
+
+PREVIEW_HINT = (
+    "**🖼️ Preview** — use the buttons to refine, then send.\n"
+    "-# ✏️ Edit core fields  •  ⚙️ Advanced (author, thumbnail, URL, timestamp)  "
+    "•  ➕ Add fields  •  📤 Pick a channel below"
+)
+
 
 class EmbedActionsView(discord.ui.View):
     def __init__(self, embed: discord.Embed, author_id: int):
-        super().__init__(timeout=300)
+        super().__init__(timeout=600)
         self.embed = embed
         self.author_id = author_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ Only the embed creator can use these buttons.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Only the embed creator can use these controls.", ephemeral=True
+            )
             return False
         return True
 
-    @discord.ui.button(label="✅ Send Here", style=discord.ButtonStyle.success)
+    # Row 0 ────────────────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="✅ Send Here", style=discord.ButtonStyle.success, row=0)
     async def send_here(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.channel.send(embed=self.embed)
-        await interaction.response.edit_message(content="✅ Embed sent!", embed=None, view=None)
+        await interaction.response.edit_message(
+            content=f"✅ Embed sent to {interaction.channel.mention}!", embed=None, view=None
+        )
 
-    @discord.ui.button(label="📤 Send to Channel", style=discord.ButtonStyle.primary)
-    async def send_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SendToChannelModal(self))
-
-    @discord.ui.button(label="➕ Add Field", style=discord.ButtonStyle.secondary)
-    async def add_field(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AddFieldModal(self))
-
-    @discord.ui.button(label="✏️ Edit", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="✏️ Edit", style=discord.ButtonStyle.primary, row=0)
     async def edit_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditEmbedModal(self))
 
-    @discord.ui.button(label="⚙️ Advanced", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="⚙️ Advanced", style=discord.ButtonStyle.secondary, row=0)
     async def advanced(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AdvancedOptionsModal(self))
 
-    @discord.ui.button(label="🗑️ Clear Fields", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="➕ Add Field", style=discord.ButtonStyle.secondary, row=0)
+    async def add_field(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AddFieldModal(self))
+
+    @discord.ui.button(label="🗑️ Clear Fields", style=discord.ButtonStyle.danger, row=0)
     async def clear_fields(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.embed.clear_fields()
-        await interaction.response.edit_message(content="**Preview** (fields cleared)", embed=self.embed, view=self)
+        await interaction.response.edit_message(
+            content=PREVIEW_HINT + "\n-# Fields cleared.",
+            embed=self.embed,
+            view=self,
+        )
+
+    # Row 1 ────────────────────────────────────────────────────────────────────
 
     @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger, row=1)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Cancelled.", embed=None, view=None)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
+    # Row 2 — channel select (Discord native channel picker) ──────────────────
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        placeholder="📤 Send to a channel…",
+        row=2,
+        channel_types=[discord.ChannelType.text],
+        min_values=1,
+        max_values=1,
+    )
+    async def channel_select(
+        self, interaction: discord.Interaction, select: discord.ui.ChannelSelect
+    ):
+        channel = select.values[0]
+        try:
+            await channel.send(embed=self.embed)
+            await interaction.response.edit_message(
+                content=f"✅ Embed sent to {channel.mention}!", embed=None, view=None
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"❌ I don't have permission to send messages in {channel.mention}.", ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error: `{e}`", ephemeral=True)
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item
+    ):
         print(f"EmbedActionsView error on {item}: {error}")
         try:
             if interaction.response.is_done():
-                await interaction.followup.send(f"❌ Button error: `{error}`", ephemeral=True)
+                await interaction.followup.send(f"❌ Error: `{error}`", ephemeral=True)
             else:
-                await interaction.response.send_message(f"❌ Button error: `{error}`", ephemeral=True)
-        except Exception:
-            pass
-
-
-# ── UI: Send to channel modal ─────────────────────────────────────────────────
-
-class SendToChannelModal(discord.ui.Modal, title="Send to Channel"):
-    channel_id = discord.ui.TextInput(
-        label="Channel ID or #mention",
-        placeholder="Paste a channel ID or right-click → Copy ID",
-        required=True,
-        max_length=30,
-    )
-
-    def __init__(self, view: EmbedActionsView):
-        super().__init__()
-        self.embed_view = view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = self.channel_id.value.strip().strip("<#>")
-        try:
-            ch = interaction.guild.get_channel(int(raw))
-            if ch is None:
-                raise ValueError
-        except (ValueError, AttributeError):
-            return await interaction.response.send_message("❌ Channel not found. Make sure you paste a valid channel ID.", ephemeral=True)
-
-        await ch.send(embed=self.embed_view.embed)
-        await interaction.response.edit_message(content=f"✅ Embed sent to {ch.mention}!", embed=None, view=None)
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
-
-
-# ── Main embed builder modal (triggered by /embed) ───────────────────────────
-
-class EmbedBuilderModal(discord.ui.Modal, title="🖼️ Embed Builder"):
-    embed_title = discord.ui.TextInput(
-        label="Title",
-        placeholder="Your embed title …",
-        required=False,
-        max_length=256,
-    )
-    description = discord.ui.TextInput(
-        label="Description",
-        style=discord.TextStyle.long,
-        placeholder="Main body text. Markdown supported: **bold**, *italic*, `code` …",
-        required=False,
-        max_length=4000,
-    )
-    color = discord.ui.TextInput(
-        label="Side-bar Color  (name or #hex)",
-        placeholder="e.g.  gold  /  #FFD700  /  blurple",
-        default="blurple",
-        required=False,
-        max_length=30,
-    )
-    footer = discord.ui.TextInput(
-        label="Footer Text",
-        placeholder="e.g. VividForge • Today",
-        required=False,
-        max_length=2048,
-    )
-    image_url = discord.ui.TextInput(
-        label="Image URL  (large bottom image)",
-        placeholder="https://example.com/image.png",
-        required=False,
-        max_length=500,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        # Defer immediately — this acknowledges the interaction within 3 s
-        # and gives us 15 minutes to send the real response via followup.
-        await interaction.response.defer(ephemeral=True)
-        try:
-            embed = discord.Embed(color=resolve_color(self.color.value or "blurple"))
-            if self.embed_title.value:  embed.title       = self.embed_title.value
-            if self.description.value:  embed.description = self.description.value
-            if self.footer.value:       embed.set_footer(text=self.footer.value)
-            if self.image_url.value:    embed.set_image(url=self.image_url.value)
-
-            has_content = any([self.embed_title.value, self.description.value, self.image_url.value])
-            if not has_content:
-                return await interaction.followup.send(
-                    embed=discord.Embed(
-                        description="❌ Add at least a **title**, **description**, or **image URL**.",
-                        color=discord.Color.red(),
-                    ),
-                    ephemeral=True,
-                )
-
-            view = EmbedActionsView(embed=embed, author_id=interaction.user.id)
-            await interaction.followup.send(
-                content="**Preview** — use the buttons below to refine and send.",
-                embed=embed,
-                view=view,
-                ephemeral=True,
-            )
-        except Exception as e:
-            print(f"EmbedBuilderModal.on_submit error: {e}")
-            try:
-                await interaction.followup.send(f"❌ Error building embed: `{e}`", ephemeral=True)
-            except Exception:
-                pass
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception):
-        print(f"EmbedBuilderModal error: {error}")
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
-            else:
-                await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+                await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
         except Exception:
             pass
 
@@ -349,51 +415,47 @@ class EmbedBuilderModal(discord.ui.Modal, title="🖼️ Embed Builder"):
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
 class Embeds(commands.Cog):
-    """Embed builder — guided /embed and flexible !embed."""
+    """Embed builder — guided /embed and power-user !embed."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ── /embed (slash — opens guided modal) ───────────────────────────────────
+    # /embed ───────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="embed", description="Open the guided embed builder.")
     async def embed_slash(self, interaction: discord.Interaction):
-        """Opens a step-by-step form to build and send a custom embed."""
         try:
             await interaction.response.send_modal(EmbedBuilderModal())
         except Exception as e:
             print(f"embed_slash error: {e}")
             if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Could not open the embed builder: `{e}`", ephemeral=True)
+                await interaction.response.send_message(
+                    f"❌ Could not open the embed builder: `{e}`", ephemeral=True
+                )
 
-    # ── !embed (prefix — flag-based, power user) ──────────────────────────────
+    # !embed ───────────────────────────────────────────────────────────────────
 
     @commands.command(name="embed")
     @commands.has_permissions(manage_messages=True)
     async def embed_prefix(self, ctx: commands.Context, *, raw: str = ""):
-        """Send a custom embed using flags.
+        """Build an embed with flags.
 
-        Flags (all optional):
-          --title         Title text
-          --description   Body (markdown supported)
-          --color         Name or hex  (e.g. red, #ff0000)
-          --footer        Footer text
-          --author        Author name
-          --image         Large bottom image URL
-          --thumbnail     Small top-right image URL
-          --field         "Name | Value"  (repeat for multiple fields)
-          --inline        yes/no for the preceding --field
-          --channel       #channel to send to
-          --timestamp     yes to show current timestamp
-
-        Available colors: red green blue yellow orange purple pink cyan
-                          white black gold blurple dark navy teal lime
-                          maroon violet indigo coral  (or any #hex)
+        Flags:
+          --title        Title text
+          --description  Body (markdown)
+          --color        Name or #hex
+          --footer       Footer text
+          --author       Author name
+          --image        Large bottom image URL
+          --thumbnail    Small top-right image URL
+          --field        "Name | Value"  (repeat for multiple)
+          --inline       yes/no for the preceding --field
+          --channel      #channel or ID to send to
+          --timestamp    yes to add current timestamp
 
         Examples:
-          !embed --title Hello --description Welcome! --color gold
-          !embed --title Stats --field Wins | 42 --inline yes --field Losses | 3
-          !embed --title Announce --image https://... --channel #general
+          !embed --title Hi --description Welcome! --color gold
+          !embed --title Stats --field Wins | 42 --inline yes --channel #general
         """
         if not raw:
             return await ctx.send(embed=self._help_embed())
@@ -407,8 +469,7 @@ class Embeds(commands.Cog):
         if not flags:
             return await ctx.send(embed=self._help_embed())
 
-        color = resolve_color(flags.get("color", "blurple"))
-        embed = discord.Embed(color=color)
+        embed = discord.Embed(color=resolve_color(flags.get("color", "blurple")))
 
         if "title"       in flags: embed.title       = flags["title"][:256]
         if "description" in flags: embed.description = flags["description"][:4096]
@@ -422,12 +483,13 @@ class Embeds(commands.Cog):
         for name, value, inline in self._collect_fields(tokens):
             embed.add_field(name=name[:256], value=value[:1024], inline=inline)
 
-        has_content = any([
+        if not any([
             flags.get("title"), flags.get("description"), flags.get("image"),
             flags.get("thumbnail"), embed.fields,
-        ])
-        if not has_content:
-            return await ctx.send(embed=discord.Embed(description="❌ The embed has no content.", color=discord.Color.red()))
+        ]):
+            return await ctx.send(embed=discord.Embed(
+                description="❌ The embed has no content.", color=discord.Color.red()
+            ))
 
         channel = ctx.channel
         if "channel" in flags:
@@ -440,45 +502,60 @@ class Embeds(commands.Cog):
 
         await channel.send(embed=embed)
         if channel != ctx.channel:
-            await ctx.send(embed=discord.Embed(description=f"✅ Embed sent to {channel.mention}.", color=discord.Color.green()), delete_after=5)
+            await ctx.send(
+                embed=discord.Embed(
+                    description=f"✅ Embed sent to {channel.mention}.",
+                    color=discord.Color.green(),
+                ),
+                delete_after=5,
+            )
         await ctx.message.delete()
 
-    # ── !embedjson ────────────────────────────────────────────────────────────
+    # !embedjson ───────────────────────────────────────────────────────────────
 
     @commands.command(name="embedjson")
     @commands.has_permissions(manage_messages=True)
     async def embedjson(self, ctx: commands.Context, *, raw_json: str = ""):
-        """Send an embed from raw JSON (power users).
-
-        Usage: !embedjson {"title": "Hi", "color": 5814783}
-        """
+        """Send an embed from raw JSON. Usage: !embedjson {"title": "Hi"}"""
         import json, re
         raw_json = re.sub(r"^```(?:json)?\n?", "", raw_json.strip())
         raw_json = re.sub(r"\n?```$", "", raw_json)
         if not raw_json:
-            return await ctx.send(embed=discord.Embed(description="❌ Provide a JSON object.", color=discord.Color.red()))
+            return await ctx.send(embed=discord.Embed(
+                description="❌ Provide a JSON object.", color=discord.Color.red()
+            ))
         try:
-            data = json.loads(raw_json)
-            embed = discord.Embed.from_dict(data)
+            embed = discord.Embed.from_dict(json.loads(raw_json))
         except Exception as e:
-            return await ctx.send(embed=discord.Embed(description=f"❌ Error: `{e}`", color=discord.Color.red()))
+            return await ctx.send(embed=discord.Embed(
+                description=f"❌ JSON error: `{e}`", color=discord.Color.red()
+            ))
         await ctx.send(embed=embed)
         await ctx.message.delete()
 
-    # ── !embedcolors ──────────────────────────────────────────────────────────
+    # !embedcolors ─────────────────────────────────────────────────────────────
 
     @commands.command(name="embedcolors", aliases=["colors"])
     async def embedcolors(self, ctx: commands.Context):
-        """Show all named colors. Usage: !embedcolors"""
-        embed = discord.Embed(title="🎨 Available Colors", description="Use with `--color` (prefix) or the color field in `/embed`.\nYou can also use any hex code: `#FF5733`", color=discord.Color.blurple())
-        chunk = "\n".join(f"`{name:<10}` `#{hex(val)[2:].upper().zfill(6)}`" for name, val in NAMED_COLORS.items())
+        """Show all named embed colors."""
+        embed = discord.Embed(
+            title="🎨 Available Colors",
+            description=(
+                "Use with `--color` in `!embed`, or type the name / any `#hex` into `/embed`.\n"
+                "You can also use any hex code: `#FF5733`"
+            ),
+            color=discord.Color.blurple(),
+        )
+        chunk = "\n".join(
+            f"`{name:<10}` `#{val:06X}`" for name, val in NAMED_COLORS.items()
+        )
         embed.add_field(name="Named Colors", value=chunk, inline=False)
         await ctx.send(embed=embed)
 
-    # ── Internals ─────────────────────────────────────────────────────────────
+    # Internals ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _parse_flags(tokens: tuple[str, ...]) -> dict[str, str]:
+    def _parse_flags(tokens: tuple) -> dict:
         flags: dict[str, str] = {}
         current_key = None
         current_val: list[str] = []
@@ -495,7 +572,7 @@ class Embeds(commands.Cog):
         return flags
 
     @staticmethod
-    def _collect_fields(tokens: tuple[str, ...]) -> list[tuple[str, str, bool]]:
+    def _collect_fields(tokens: tuple) -> list:
         fields: list[tuple[str, str, bool]] = []
         i = 0
         while i < len(tokens):
@@ -523,26 +600,28 @@ class Embeds(commands.Cog):
     @staticmethod
     def _help_embed() -> discord.Embed:
         return discord.Embed(
-            title="🖼️ Embed Command Help",
+            title="🖼️ Embed Builder Help",
             description=(
-                "**Slash command (recommended — guided):**\n`/embed` — opens a pop-up form\n\n"
-                "**Prefix command (power user):**\n"
+                "**Slash (recommended — guided form):**\n`/embed` → fill in the form → "
+                "use buttons to add fields, advanced options, then pick a channel to send to.\n\n"
+                "**Prefix (power user):**\n"
                 "```\n!embed --title Hello --description World --color gold\n```\n"
-                "**Available flags:** `--title` `--description` `--color` `--footer` `--author` "
+                "**Flags:** `--title` `--description` `--color` `--footer` `--author` "
                 "`--image` `--thumbnail` `--field` `--inline` `--channel` `--timestamp`\n\n"
                 "Use `!embedcolors` to see all named colors."
             ),
             color=discord.Color.blurple(),
         )
 
-
-    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        print(f"Embeds app command error: {error}")
+    async def cog_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ):
+        print(f"Embeds cog_app_command_error: {error}")
         try:
             if interaction.response.is_done():
-                await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
+                await interaction.followup.send(f"❌ Error: `{error}`", ephemeral=True)
             else:
-                await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+                await interaction.response.send_message(f"❌ Error: `{error}`", ephemeral=True)
         except Exception:
             pass
 

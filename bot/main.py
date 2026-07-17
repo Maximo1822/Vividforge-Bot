@@ -1,12 +1,22 @@
 import os
 import discord
 from discord.ext import commands
-from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+# Try common env-var names used by different hosting panels
+TOKEN = (
+    os.getenv("DISCORD_BOT_TOKEN") or
+    os.getenv("TOKEN") or
+    os.getenv("BOT_TOKEN")
+)
+
+if not TOKEN:
+    raise RuntimeError(
+        "❌ Bot token not found!\n"
+        "Set DISCORD_BOT_TOKEN in your environment variables / hosting panel."
+    )
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -41,14 +51,13 @@ class VividForgeBot(commands.Bot):
         print(f"✅ Logged in as {self.user} (ID: {self.user.id})")
         print(f"   Serving {len(self.guilds)} guild(s).")
 
-        # Clear any guild-specific commands that caused duplicates before
+        # Clear guild-specific copies to avoid duplicates, then sync globally
         for guild in self.guilds:
             try:
-                await self.tree.sync(guild=guild)  # syncs empty guild list → removes guild copies
+                await self.tree.sync(guild=guild)
             except Exception:
                 pass
 
-        # Register commands globally (shows in all servers, no duplicates)
         synced = await self.tree.sync()
         print(f"   ✅ Synced {len(synced)} slash command(s) globally.")
 
@@ -81,12 +90,12 @@ bot = VividForgeBot()
 @bot.command(name="sync")
 @commands.is_owner()
 async def sync(ctx: commands.Context):
-    """Force-sync slash commands to this server. Owner only."""
+    """Force-sync slash commands globally. Owner only."""
     try:
-        synced = await bot.tree.sync(guild=ctx.guild)
+        synced = await bot.tree.sync()
         await ctx.send(embed=discord.Embed(
             title="✅ Synced",
-            description=f"Synced **{len(synced)}** slash command(s) to **{ctx.guild.name}**.",
+            description=f"Synced **{len(synced)}** slash command(s) globally.",
             color=discord.Color.green(),
         ))
     except Exception as e:
